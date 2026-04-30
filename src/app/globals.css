@@ -1,27 +1,147 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --orbis-bg: #0a0e1a;
+  --orbis-fg: #f5f7fa;
+  color-scheme: dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--orbis-bg);
+  color: var(--orbis-fg);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family:
+    "Pretendard",
+    var(--font-sans),
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings:
+    "ss01" on,
+    "kern" on;
+  overflow-x: hidden;
+}
+
+/* selection */
+::selection {
+  background: rgba(245, 247, 250, 0.18);
+  color: #ffffff;
+}
+
+/* hide native input affordances on Co-Star style fields */
+.orbis-inline-input {
+  background: transparent;
+  border: 0;
+  outline: 0;
+  border-bottom: 1px dashed rgba(245, 247, 250, 0.32);
+  color: #f5f7fa;
+  padding: 0 0.25rem 0.1rem;
+  font: inherit;
+  caret-color: #f5f7fa;
+  min-width: 0;
+}
+.orbis-inline-input::placeholder {
+  color: rgba(245, 247, 250, 0.4);
+}
+.orbis-inline-input:focus {
+  border-bottom-color: rgba(245, 247, 250, 0.85);
+  border-bottom-style: solid;
+}
+
+/* monospace label */
+.label-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(245, 247, 250, 0.5);
+}
+
+/* serif headline */
+.headline-serif {
+  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  font-feature-settings: "ss01", "kern";
+  letter-spacing: -0.02em;
+}
+
+/* breathing star — subtle brightness oscillation, not blink */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: var(--star-min, 0.25);
+  }
+  50% {
+    opacity: var(--star-max, 0.9);
+  }
+}
+
+/* prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* page-edge crosshair markers — adds an "instrument" feel */
+.crosshair {
+  position: fixed;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.45;
+}
+.crosshair::before,
+.crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(245, 247, 250, 0.6);
+}
+.crosshair::before {
+  width: 100%;
+  height: 1px;
+  top: 50%;
+  left: 0;
+}
+.crosshair::after {
+  width: 1px;
+  height: 100%;
+  left: 50%;
+  top: 0;
+}
+
+/* baseline grid overlay — visible only at very low opacity */
+.grid-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  background-image:
+    linear-gradient(to right, rgba(245, 247, 250, 0.04) 1px, transparent 1px);
+  background-size: calc(100vw / 12) 100%;
+  mix-blend-mode: screen;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
   }
 }
