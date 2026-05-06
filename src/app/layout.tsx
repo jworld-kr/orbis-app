@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -25,6 +25,13 @@ export const metadata: Metadata = {
   title: "Orbis — 당신이라는 세계",
   description:
     "유럽의 사주, Orbis. NASA 천체 데이터로 당신이라는 세계를 읽습니다.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -43,7 +43,7 @@ export default function LoginModal({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3, ease: ORBIS_EASE }}
           onClick={onClose}
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-md px-5"
+          className="fixed inset-0 z-[200] overflow-y-auto overscroll-contain bg-black/70 backdrop-blur-md px-5 py-8 md:py-12 flex items-start md:items-center justify-center"
         >
           <motion.div
             key="panel"
@@ -52,7 +52,7 @@ export default function LoginModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ duration: 0.45, ease: ORBIS_EASE }}
-            className="relative w-full max-w-sm border border-white/15 bg-[#0A0E1A] p-8 md:p-10"
+            className="relative w-full max-w-sm my-auto border border-white/15 bg-[#0A0E1A] p-7 md:p-10"
           >
             <button
               type="button"

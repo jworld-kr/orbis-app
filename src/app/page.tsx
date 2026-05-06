@@ -8,12 +8,14 @@ import Pillars from "@/components/sections/Pillars";
 import ChartForm from "@/components/sections/ChartForm";
 import FinalCTA from "@/components/sections/FinalCTA";
 import Footer from "@/components/sections/Footer";
+import OrbitOrb from "@/components/account/OrbitOrb";
 
 export default function Home() {
   return (
     <>
       <SmoothScroll />
       <ScrollHUD />
+      <OrbitOrb />
       <main className="relative">
         <Hero />
         <About />

@@ -5,6 +5,14 @@ import { DateTime } from "luxon";
 import { createHash } from "node:crypto";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  computeAspects,
+  houseOfLongitude,
+  findStelliums,
+  classifyChartShape,
+  type PlanetPosition,
+  type HouseCusp,
+} from "@/lib/astrology/aspects";
 
 // Force Node.js runtime — swisseph-wasm needs Node, not edge.
 export const runtime = "nodejs";
@@ -254,7 +262,7 @@ export async function POST(req: Request) {
     // Julian Day (UT)
     const jd = swe.julday(uYear, uMonth, uDay, uHour);
 
-    // Planet positions
+    // Planet positions (longitude + speed for retrograde detection)
     const planetIds = [
       { id: swe.SE_SUN, name: "태양", sym: "☉" },
       { id: swe.SE_MOON, name: "달", sym: "☽" },
@@ -265,14 +273,21 @@ export async function POST(req: Request) {
       { id: swe.SE_SATURN, name: "토성", sym: "♄" },
     ];
 
+    const readCalc = (r: unknown): { lon: number; speed: number } => {
+      if (Array.isArray(r) || r instanceof Float64Array) {
+        const arr = r as ArrayLike<number>;
+        return { lon: arr[0], speed: arr[3] ?? 0 };
+      }
+      if (r && typeof r === "object") {
+        const o = r as { longitude?: number; longitudeSpeed?: number };
+        return { lon: o.longitude ?? 0, speed: o.longitudeSpeed ?? 0 };
+      }
+      return { lon: 0, speed: 0 };
+    };
+
     const planets = planetIds.map((p) => {
       const r = swe.calc_ut(jd, p.id, swe.SEFLG_SWIEPH) as unknown;
-      let lon = 0;
-      if (Array.isArray(r) || r instanceof Float64Array) {
-        lon = (r as ArrayLike<number>)[0];
-      } else if (r && typeof r === "object" && "longitude" in r) {
-        lon = (r as { longitude: number }).longitude;
-      }
+      const { lon, speed } = readCalc(r);
       const z = toZodiac(lon);
       return {
         symbol: p.sym,
@@ -282,8 +297,31 @@ export async function POST(req: Request) {
         degree: z.degree,
         minute: z.minute,
         label: z.label,
+        speed,
+        retrograde: speed < 0,
       };
     });
+
+    // North Lunar Node — required for §5 매핑 (재능과 사명)
+    const nodeId =
+      (swe as unknown as { SE_TRUE_NODE?: number; SE_MEAN_NODE?: number })
+        .SE_TRUE_NODE ??
+      (swe as unknown as { SE_MEAN_NODE?: number }).SE_MEAN_NODE ??
+      11;
+    let northNode: ReturnType<typeof toZodiac> & { longitude: number } = {
+      sign: "—", signIndex: -1, degree: 0, minute: 0,
+      longitude: 0, label: "—",
+    } as never;
+    let southNodeLon = 0;
+    try {
+      const nr = swe.calc_ut(jd, nodeId, swe.SEFLG_SWIEPH) as unknown;
+      const { lon: nlon } = readCalc(nr);
+      northNode = toZodiac(nlon);
+      southNodeLon = (nlon + 180) % 360;
+    } catch {
+      // some swisseph builds don't expose nodes; tolerate gracefully
+    }
+    const southNode = toZodiac(southNodeLon);
 
     // Houses (Placidus = 'P')
     const housesRaw = swe.houses(jd, latitude, longitude, "P") as unknown as {
@@ -310,6 +348,34 @@ export async function POST(req: Request) {
 
     swe.close?.();
 
+    // ── Derived astrology data — aspects, house placement, stelliums, shape
+    const housesForCalc: HouseCusp[] = houses.map((h) => ({
+      index: h.index,
+      cusp: h.cusp,
+    }));
+
+    const planetsForCalc: PlanetPosition[] = planets.map((p) => ({
+      symbol: p.symbol,
+      name: p.name,
+      longitude: p.longitude,
+      speed: p.speed,
+    }));
+
+    // Map planet name → house number
+    const housePlacement: Record<string, number> = {};
+    const planetsWithHouse = planets.map((p) => {
+      const house = houseOfLongitude(p.longitude, housesForCalc);
+      housePlacement[p.name] = house;
+      return { ...p, house };
+    });
+
+    const ascHouse = 1; // by definition
+    const mcHouse = houseOfLongitude(mc, housesForCalc);
+
+    const aspects = computeAspects(planetsForCalc);
+    const stelliums = findStelliums(planetsWithHouse, housePlacement);
+    const chartShape = classifyChartShape(planets.map((p) => p.longitude));
+
     const chartJson = {
       input: {
         local: { year, month, day, hour, minute },
@@ -320,12 +386,19 @@ export async function POST(req: Request) {
         placeName,
         julianDay: jd,
       },
-      planets,
+      planets: planetsWithHouse,
       houses,
       axes: {
-        ascendant: { ...ascZ },
-        midheaven: { ...mcZ },
+        ascendant: { ...ascZ, house: ascHouse },
+        midheaven: { ...mcZ, house: mcHouse },
       },
+      nodes: {
+        north: { ...northNode },
+        south: { ...southNode },
+      },
+      aspects,
+      stelliums,
+      chartShape,
     };
 
     // Persist chart + create empty report row (idempotent on chart fingerprint).

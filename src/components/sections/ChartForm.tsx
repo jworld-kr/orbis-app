@@ -197,22 +197,18 @@ export default function ChartForm() {
       }
       setResult(json);
 
-      // Kick off Ch I preview generation, then route to the report page.
+      // Fire preview generation and route immediately — the report page
+      // shows a spinner while the background task finishes.
       if (json.reportId) {
-        try {
-          const prev = await fetch(`/api/reports/${json.reportId}/preview`, {
-            method: "POST",
-          });
-          if (prev.ok) {
-            window.location.href = `/report/${json.reportId}`;
-            return;
-          }
-        } catch {
-          /* fall through to inline result */
-        }
+        // Don't await — the request kicks off generation server-side and
+        // returns 202 quickly, but we also don't want a slow handshake
+        // to gate the redirect on a flaky network.
+        void fetch(`/api/reports/${json.reportId}/preview`, { method: "POST" });
+        window.location.href = `/report/${json.reportId}`;
+        return;
       }
 
-      // Fallback — show inline result panel if preview failed.
+      // Fallback — show inline result panel if reportId is missing.
       setTimeout(() => {
         const el = document.getElementById("chart-result");
         el?.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -9,6 +9,9 @@ import {
   ChapterHeaderInterpretation,
   ChapterSynergy,
 } from "@/components/report/ReportPages";
+import PaywallTrigger from "@/components/billing/PaywallTrigger";
+import LockedChapterPage from "@/components/report/LockedChapterPage";
+import ReportStatusWatcher from "@/components/report/ReportStatusWatcher";
 
 /**
  * Real per-user report.
@@ -47,24 +50,74 @@ export default async function ReportPage({
     .single();
   if (!chart) notFound();
 
+  const { data: profile } = await supabase
+    .from("users")
+    .select("token_balance")
+    .eq("id", user.id)
+    .maybeSingle();
+  const tokenBalance = profile?.token_balance ?? 0;
+
   const chartJson = chart.chart_json as ChartJson;
   const identity = buildIdentity(chart);
   const panel = buildCoordinatesPanel(chartJson);
 
   const chapters = ((report.chapters as Array<{ no: number; content: Chapter }>) ?? [])
     .sort((a, b) => a.no - b.no);
-  const ch1 = chapters.find((c) => c.no === 1)?.content;
+  const hasCh1 = chapters.some((c) => c.no === 1);
 
-  // 4 fixed pages (Cover, Coordinates, TOC × 2) + Ch I body + optional Ch I synergy
+  // While we're still generating the free preview (Ch I), show a
+  // dedicated waiting screen — there's nothing meaningful to render
+  // yet and a hard reload picks up the result the moment it lands.
+  if (report.status === "preview_pending" && !hasCh1) {
+    return (
+      <main className="min-h-screen w-full bg-[#06080F] text-white">
+        <ReportStatusWatcher reportId={report.id} initialStatus="preview_pending" />
+      </main>
+    );
+  }
+  if (report.status === "failed") {
+    return (
+      <main className="min-h-screen w-full bg-[#06080F] text-white flex items-center justify-center px-6">
+        <div className="text-center max-w-md">
+          <div className="font-mono text-[10px] tracking-[0.3em] text-white/45 mb-4">
+            ORBIS
+          </div>
+          <p className="font-kr text-[15px] text-red-300/85 leading-[1.7]">
+            보고서 생성 중 오류가 발생했습니다.
+            <br />
+            잠시 후 다시 시도해주세요.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // Decide which chapters to render based on payment status.
+  // - preview_pending / preview_ready → only Ch I (free preview)
+  // - full_pending / full_ready       → all available chapters
+  const isPaid = report.status === "full_ready" || report.status === "full_pending";
+  const chaptersToRender = isPaid
+    ? chapters
+    : chapters.filter((c) => c.no === 1);
+
+  // Fixed pages first, then chapters in order. Ch I gets a synergy page.
   const pages: PageEntry[] = [
     { kind: "cover" },
     { kind: "coordinates" },
     { kind: "toc", part: 1 },
     { kind: "toc", part: 2 },
   ];
-  if (ch1) {
-    pages.push({ kind: "chapter", chapter: ch1 });
-    if (ch1.synergy) pages.push({ kind: "synergy", chapter: ch1 });
+  for (const c of chaptersToRender) {
+    pages.push({ kind: "chapter", chapter: c.content });
+    if (c.no === 1 && c.content.synergy) {
+      pages.push({ kind: "synergy", chapter: c.content });
+    }
+  }
+  // If the user is still on the preview tier, append a single locked
+  // chapter teaser — enough to hint that more is below without flooding
+  // the page with placeholders.
+  if (!isPaid) {
+    pages.push({ kind: "locked", chapterNo: 2 });
   }
   const totalPages = pages.length;
 
@@ -112,15 +165,29 @@ export default async function ReportPage({
               </A4Page>
             );
           }
+          if (p.kind === "locked") {
+            return (
+              <A4Page key={i} pageNumber={pageNumber} totalPages={totalPages}>
+                <LockedChapterPage chapterNo={p.chapterNo} />
+              </A4Page>
+            );
+          }
           return null;
         })}
 
-        {report.status === "preview_pending" && !ch1 && (
-          <div className="max-w-md mx-auto text-center font-kr text-white/55 text-[13px] py-12">
-            보고서 1챕터 생성 중입니다. 잠시 후 새로고침해주세요.
-          </div>
+        {report.status === "full_pending" && (
+          <ReportStatusWatcher reportId={report.id} initialStatus="full_pending" />
         )}
       </div>
+
+      {report.status === "preview_ready" && (
+        <PaywallTrigger
+          reportId={report.id}
+          userId={user.id}
+          email={user.email ?? undefined}
+          tokenBalance={tokenBalance}
+        />
+      )}
     </main>
   );
 }
@@ -139,7 +206,8 @@ type PageEntry =
   | { kind: "coordinates" }
   | { kind: "toc"; part: 1 | 2 }
   | { kind: "chapter"; chapter: Chapter }
-  | { kind: "synergy"; chapter: Chapter };
+  | { kind: "synergy"; chapter: Chapter }
+  | { kind: "locked"; chapterNo: number };
 
 function buildIdentity(chart: {
   name: string;

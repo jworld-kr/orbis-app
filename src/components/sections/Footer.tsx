@@ -1,3 +1,5 @@
+import FooterAccountStrip from "@/components/account/FooterAccountStrip";
+
 export default function Footer() {
   return (
     <footer className="w-full border-t border-white/[0.08] px-6 md:px-20 py-14">
@@ -51,16 +53,8 @@ export default function Footer() {
           </div>
         </div>
 
-        {/* contact */}
-        <div className="md:col-span-3 md:text-right">
-          <div className="label-mono mb-4">CONTACT</div>
-          <a
-            href="mailto:support@wondercreative.kr"
-            className="font-mono text-white/65 hover:text-white transition-colors text-[12px] leading-[1.85]"
-          >
-            support@wondercreative.kr
-          </a>
-        </div>
+        {/* account / login */}
+        <FooterAccountStrip />
       </div>
 
       {/* business info — fine print */}
@@ -70,6 +64,12 @@ export default function Footer() {
           <span>대표: 이원준</span>
           <span>사업자등록번호: 678-37-00662</span>
           <span>통신판매업 신고번호: 2019-서울용산-1033</span>
+          <a
+            href="mailto:support@wondercreative.kr"
+            className="hover:text-white transition-colors"
+          >
+            문의: support@wondercreative.kr
+          </a>
         </div>
         <div className="mt-4 flex items-center justify-between label-mono opacity-50">
           <span>© 2026 ORBIS</span>

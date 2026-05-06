@@ -1,12 +1,21 @@
 import type { Chapter } from "./types";
 import chapter1Mock from "./chapter1";
 import chapter2Mock from "./chapter2";
+import { getChapterSpec } from "./chapterMap";
+import { generateChapterViaAnthropic } from "./anthropic";
+import { crossValidate } from "./crossValidate";
 
 /**
  * Single source of truth for "given a chart + chapter number, produce a
- * Chapter object". Today: returns hand-written mock content while
- * ANTHROPIC_API_KEY is unset. Tomorrow: routes to Anthropic API with
- * 챕터_생성_가이드.md as the system prompt and 챕터별 chart slice as input.
+ * Chapter object".
+ *
+ * - With ANTHROPIC_API_KEY set: real call → §5/§6/§9 self-validate →
+ *   1 retry on failure → return.
+ * - Without the key: return the hand-written mock so the rest of the
+ *   pipeline (DB write, render, payment gate) can be exercised free.
+ *
+ * For full reports, prefer generateFullReport() which adds §10 cross-
+ * chapter dedup on top.
  */
 
 export type ChartData = {
@@ -24,12 +33,35 @@ export type ChartData = {
     degree: number;
     minute: number;
     label: string;
+    speed?: number;
+    retrograde?: boolean;
+    house?: number;
   }[];
   houses: { index: number; cusp: number; sign: string; label: string }[];
   axes: {
-    ascendant: { sign: string; degree: number; minute: number; label: string };
-    midheaven: { sign: string; degree: number; minute: number; label: string };
+    ascendant: {
+      sign: string; degree: number; minute: number; label: string; house?: number;
+    };
+    midheaven: {
+      sign: string; degree: number; minute: number; label: string; house?: number;
+    };
   };
+  nodes?: {
+    north: { sign: string; degree: number; minute: number; label: string };
+    south: { sign: string; degree: number; minute: number; label: string };
+  };
+  aspects?: Array<{
+    a: string;
+    b: string;
+    kind: "conjunction" | "sextile" | "square" | "trine" | "opposition";
+    exactAngle: number;
+    actualAngle: number;
+    orb: number;
+    applying: boolean;
+    label: string;
+  }>;
+  stelliums?: Array<{ kind: "sign" | "house"; key: string; planets: string[] }>;
+  chartShape?: string;
 };
 
 const MOCKS: Record<number, Chapter> = {
@@ -37,39 +69,113 @@ const MOCKS: Record<number, Chapter> = {
   2: chapter2Mock,
 };
 
+/* ────────────────────────────────────────────────────────────────────────── */
+
 /**
- * Generate one chapter. Returns the same Chapter shape that the report
- * page already knows how to render.
+ * Generate one chapter.
  *
- * @param chartData  Output of /api/chart
- * @param subjectName  Person's name to address in the prose ("이원준님은…")
- * @param chapterNo  1..12
+ * @param chartData     Output of /api/chart
+ * @param subjectName   Person's name to address in the prose ("이원준님은…")
+ * @param chapterNo     1..12
+ * @param priorChapters Already-generated chapters in this report — used
+ *                      for §10 cross-chapter dedup feedback in the prompt.
  */
 export async function generateChapter(
-  _chartData: ChartData,
-  _subjectName: string,
+  chartData: ChartData,
+  subjectName: string,
   chapterNo: number,
+  priorChapters: Chapter[] = [],
 ): Promise<Chapter> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    // Mock mode — return the hand-written sample so the full pipeline
-    // (DB write, route render, payment gate) can be exercised without
-    // burning Anthropic credits.
-    const mock = MOCKS[chapterNo];
-    if (mock) return mock;
-    return placeholderChapter(chapterNo);
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return MOCKS[chapterNo] ?? placeholderChapter(chapterNo);
   }
 
-  // TODO: real Anthropic call. Will read 챕터_생성_가이드.md as system
-  // prompt, send chart slice + sub-items for chapterNo, parse JSON, and
-  // run §11-7 self-checks. Wired up once API key is in.
-  throw new Error("anthropic_not_wired_yet");
+  const spec = getChapterSpec(chapterNo);
+  const result = await generateChapterViaAnthropic({
+    chartData,
+    subjectName,
+    spec,
+    priorChapters,
+  });
+
+  if (result.issues.length > 0) {
+    // We tried + retried; final output still has issues. Log and accept
+    // — failing the whole report would hurt the user more than minor
+    // rule violations. Issues list is preserved for QA.
+    console.warn(
+      `[generateChapter] Ch${chapterNo} accepted with ${result.issues.length} issue(s) after ${result.attempts} attempts:`,
+      result.issues.map((i) => i.code).join(", "),
+    );
+  }
+
+  return result.chapter;
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Generate the full 12-chapter report (or 11, when Ch I is already done).
+ *
+ *   - Generates sequentially (not parallel) so each chapter sees the
+ *     previously generated lead lines and can dedup.
+ *   - After all chapters are done, runs cross-validation (§10). Any
+ *     chapter flagged as duplicating an earlier one gets ONE retry
+ *     with the duplicate context fed back as feedback.
+ */
+export async function generateFullReport(
+  chartData: ChartData,
+  subjectName: string,
+  alreadyGenerated: Chapter[] = [],
+): Promise<Chapter[]> {
+  const out: Chapter[] = [...alreadyGenerated].sort((a, b) => a.no - b.no);
+  const have = new Set(out.map((c) => c.no));
+
+  for (let n = 1; n <= 12; n++) {
+    if (have.has(n)) continue;
+    const ch = await generateChapter(chartData, subjectName, n, out);
+    out.push(ch);
+    out.sort((a, b) => a.no - b.no);
+  }
+
+  // Cross-chapter dedup pass — only when real model output (mock content
+  // is hand-curated, no need to verify across chapters).
+  if (process.env.ANTHROPIC_API_KEY) {
+    const cross = crossValidate(out);
+    if (!cross.ok) {
+      const dupNos = Object.keys(cross.byChapter).map((s) => Number(s));
+      console.warn(
+        `[generateFullReport] cross-chapter issues in chapters: ${dupNos.join(", ")}. retrying offenders…`,
+      );
+      for (const n of dupNos) {
+        const issues = cross.byChapter[n];
+        const feedback =
+          "이전 챕터들과 lead/장면/결론이 중복되었습니다:\n" +
+          issues.map((i) => `- ${i.message}`).join("\n");
+        const others = out.filter((c) => c.no !== n);
+        const spec = getChapterSpec(n);
+        const result = await generateChapterViaAnthropic({
+          chartData,
+          subjectName,
+          spec,
+          priorChapters: others,
+          retryFeedback: feedback,
+        });
+        const idx = out.findIndex((c) => c.no === n);
+        if (idx >= 0) out[idx] = result.chapter;
+      }
+    }
+  }
+
+  return out;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
 function placeholderChapter(no: number): Chapter {
+  const roman = ROMAN[no] ?? String(no);
   return {
     no,
-    romanNo: ["", "I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][no] ?? String(no),
+    romanNo: roman,
     title: `챕터 ${no}`,
     en: `Chapter ${no}`,
     paragraphs: [
@@ -80,3 +186,8 @@ function placeholderChapter(no: number): Chapter {
     ],
   };
 }
+
+const ROMAN: Record<number, string> = {
+  1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI",
+  7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII",
+};
